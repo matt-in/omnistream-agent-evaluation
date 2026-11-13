@@ -1,64 +1,53 @@
 # OmniStreamRAG agent and evaluation
 
-My work covers the query-time agent controller and the evaluation tools for OmniStreamRAG. The controller handles bubble selection, tool requests, evidence checks and cited responses. The evaluation runner records results for six configurations and exports them for comparison.
+Version 0.2.0 contains the agent controller, evaluation runner and development tests for OmniStreamRAG. The implemented modules cover bubble selection, bounded investigations, evidence handling, citation checks and evaluation exports.
 
-This version runs with scripted model and retrieval components. Live model, Chroma, Graphiti, Neo4j and LlamaIndex connections are still to be added. The development results check the code and workflow; answer quality will be assessed after integration.
+## Agent controller
 
-## Check on GitHub
+The controller selects relevant bubbles and supports direct retrieval or parallel investigations for multi-hop questions. Each investigation has a default budget of six action attempts and 60 seconds. Text retrieval exposes search and stored-item access; graph retrieval also exposes related-entity and fact requests.
 
-The included workflow runs the checks on GitHub after the files are committed. No local Python installation is needed for this option.
+Returned evidence is checked against bubble exclusions, time constraints and grounding fields. Partial results survive individual investigation failures. Source conflicts remain visible, and each answer claim must reference retrieved evidence.
 
-1. Extract the ZIP and upload the project contents to a repository.
-2. Make sure `.github/workflows/verify.yml` is included.
-3. Open **Actions → Verify agent and evaluation** and open the latest run.
+Model and retrieval services connect through the interfaces in `src/omnistream/contracts.py`. The current development implementation uses scripted model decisions and a small lexical store. Live model, Chroma, Graphiti, Neo4j and LlamaIndex adapters remain to be integrated.
 
-The current expected result is **53 passing tests and 72 completed development runs**. Full upload steps for Chrome on Windows and for Mac are in [UPLOAD_TO_GITHUB.md](UPLOAD_TO_GITHUB.md).
+## Evaluation
 
-## Check on Windows
+The runner supports six configurations: `external`, `classic`, `graphiti`, `own`, `own_agents` and `classic_agents`. The development snapshot contains ten fictional source items and twelve questions covering factual, multi-hop, temporal and freshness cases.
 
-Use Python 3.12. Open the extracted project folder in PowerShell and run:
+Implemented measures include Recall@10, MRR, Hits@1 and bubble-selection precision and recall. CSV exports contain per-question results and configuration summaries; JSON traces retain the selected route, evidence and answer. Separate rating imports support answer correctness and citation faithfulness.
 
-```powershell
-py -3.12 verify.py
-```
+All six development configurations currently share the lexical store. These runs verify controller and evaluation behavior. Comparisons between retrieval methods and answer-quality measurements remain pending until integration and independent judging are complete.
 
-To save CSV files and answer traces:
+## Verification
 
-```powershell
-py -3.12 verify.py --output results/my-check
-```
+The saved verification run passed **53 automated tests** and completed **72 development runs**. The log, result tables and traces are in `verification/`. The automated workflow is defined in `.github/workflows/verify.yml`.
 
-## Check on Mac or Linux
+Python 3.12 or later is required. The development check uses the Python standard library and requires no external service credentials.
 
-Use Python 3.12 or later. In Terminal, change to the extracted project folder and run:
-
-```bash
-python3 verify.py
-```
-
-To save the outputs:
-
-```bash
-python3 verify.py --output results/my-check
-```
-
-Use a new output folder for each saved run. Add `--verbose` to list the individual tests. No API key, database or additional Python package is needed for the development check.
-
-## Main files
-
-| File | Purpose |
+| Environment | Verification command |
 | --- | --- |
-| `src/omnistream/agents.py` | Agent loop, limits, evidence handling and citation checks |
-| `src/omnistream/contracts.py` | Shared query, model, tool and evidence interfaces |
-| `src/omnistream/evaluation.py` | Evaluation runs, CSV exports and rating imports |
-| `src/omnistream/metrics.py` | Retrieval, routing, citation and timing metrics |
-| `src/omnistream/fixtures.py` | Scripted components for development |
-| `tests/` | Automated checks |
-| `data/pilot_snapshot/` | Ten fictional items, twelve questions and evidence labels |
-| `verification/` | Saved results from the completed development check |
+| Windows PowerShell with Python 3.12 | `py -3.12 verify.py` |
+| macOS or Linux Terminal | `python3 verify.py` |
 
-The test configurations share the same small lexical store. Their results are not a comparison of the genuine retrieval backends. Correctness and citation-faithfulness scores stay blank until separate judgments are entered.
+Saved output is available through `--output results/run-01`; the destination must be new or empty. The `--verbose` option lists individual tests.
 
-The final evaluation is planned for 60 questions. The corpus, independent labels, live-update checks and hardware measurements remain to be completed.
+## Repository contents
 
-Further details: [evaluation plan](docs/eval-plan.md), [module integration](docs/integration.md), and [model instructions](docs/prompts.md).
+| Path | Contents |
+| --- | --- |
+| `src/omnistream/agents.py` | Agent controller and evidence handling |
+| `src/omnistream/contracts.py` | Model, retrieval, query and evidence interfaces |
+| `src/omnistream/evaluation.py` | Evaluation runner, exports and rating imports |
+| `src/omnistream/metrics.py` | Retrieval, routing and supporting metric functions |
+| `src/omnistream/fixtures.py` | Scripted development adapters |
+| `data/pilot_snapshot/` | Fictional source items, questions and relevance labels |
+| `tests/` | Controller, contract, temporal and evaluation tests |
+| `verification/` | Saved verification results |
+| `docs/` | Evaluation plan and integration contracts |
+
+## Next stage
+
+The next stage is module integration followed by evaluation on a separate 60-question set. Remaining measurements include answer correctness, citation support, live-update delay and resource use.
+
+Technical details are recorded in the [evaluation plan](docs/eval-plan.md), [integration contracts](docs/integration.md) and [model adapter contract](docs/prompts.md).
+
