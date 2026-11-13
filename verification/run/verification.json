@@ -1,0 +1,18 @@
+{
+  "development_runs": 72,
+  "questions": 12,
+  "configurations": 6,
+  "source_sha256": "1a5804e336f10b8219ba9d3aefc740b70bd92ab1b11ec3b0faf792acee5deef4",
+  "run_kind": "fixture_smoke",
+  "scientific_comparison": false,
+  "tests_passed": 53,
+  "test_groups": {
+    "AgentTests": 27,
+    "ContractTests": 2,
+    "TemporalAndMergeTests": 6,
+    "HarnessTests": 9,
+    "MetricTests": 9
+  },
+  "python": "3.12.14",
+  "checked_at": "2026-11-13T17:16:19.406058+00:00"
+}

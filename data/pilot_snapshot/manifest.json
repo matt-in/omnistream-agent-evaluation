@@ -1,0 +1,20 @@
+{
+  "name": "fictional_pilot_v1",
+  "version": 1,
+  "split": "development_only",
+  "fictional": true,
+  "frozen_at": "2026-11-10T12:00:00Z",
+  "item_count": 10,
+  "question_count": 12,
+  "target_final_counts": {
+    "single_bubble": 15,
+    "multi_hop": 20,
+    "temporal": 15,
+    "freshness": 10
+  },
+  "sha256": {
+    "items.jsonl": "132c5e6986c8f4d6f9db6db595d2a007ab42accf30edfa19d8fa7f5527ba0ff4",
+    "questions.jsonl": "3f3da968b089eb91a766c40621434732861b76471ee3c336d9b5f3f28f2c1379",
+    "qrels.json": "2929dbb1ffb8b0db20a95b9ae76cf78f9307865e3a8a050765e2e1e716478ed1"
+  }
+}
