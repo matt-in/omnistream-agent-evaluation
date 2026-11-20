@@ -41,7 +41,8 @@ async def check_evaluation(output):
     if any(row["answer_correctness"] is not None or row["citation_faithfulness"] is not None for row in rows):
         raise ValueError("Quality scores require separate judgments")
     metadata = json.loads((output / "run.json").read_text(encoding="utf-8"))
-    if metadata["scientific_comparison"] or metadata["run_kind"] != "fixture_smoke":
+    if (metadata["scientific_comparison"] or metadata["run_kind"] != "fixture_smoke"
+            or metadata["run_status"] != "complete" or metadata["measured"] != len(rows)):
         raise ValueError("Incorrect development run metadata")
     return {"development_runs": len(rows), "questions": 12,
             "configurations": len(CONFIGURATIONS), "source_sha256": metadata["source_sha256"],

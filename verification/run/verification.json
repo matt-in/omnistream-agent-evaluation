@@ -2,17 +2,17 @@
   "development_runs": 72,
   "questions": 12,
   "configurations": 6,
-  "source_sha256": "1a5804e336f10b8219ba9d3aefc740b70bd92ab1b11ec3b0faf792acee5deef4",
+  "source_sha256": "a937a79c60b70291a5ac1e41aee7051cee3f2fefe09b3f134eaba4b8a27f6baa",
   "run_kind": "fixture_smoke",
   "scientific_comparison": false,
-  "tests_passed": 53,
+  "tests_passed": 63,
   "test_groups": {
-    "AgentTests": 27,
+    "AgentTests": 31,
     "ContractTests": 2,
-    "TemporalAndMergeTests": 6,
-    "HarnessTests": 9,
+    "TemporalAndMergeTests": 7,
+    "HarnessTests": 14,
     "MetricTests": 9
   },
   "python": "3.12.14",
-  "checked_at": "2026-11-13T17:16:19.406058+00:00"
+  "checked_at": "2026-11-20T17:56:54.585617+00:00"
 }

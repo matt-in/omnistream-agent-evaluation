@@ -1,10 +1,12 @@
 Checking the agent and evaluation code...
+test_application_and_evaluation_use_their_own_retrieval_adapters (test_agents.AgentTests.test_application_and_evaluation_use_their_own_retrieval_adapters) ... ok
 test_backend_records_are_checked_for_scope_time_and_grounding (test_agents.AgentTests.test_backend_records_are_checked_for_scope_time_and_grounding) ... ok
 test_caller_time_scope_overrides_model (test_agents.AgentTests.test_caller_time_scope_overrides_model) ... ok
 test_citation_validation_does_not_claim_semantic_entailment (test_agents.AgentTests.test_citation_validation_does_not_claim_semantic_entailment) ... ok
 test_classic_denies_graph_tools_and_bounds_invalid_attempts (test_agents.AgentTests.test_classic_denies_graph_tools_and_bounds_invalid_attempts) ... ok
 test_conflicting_pin_and_exclusion_rejected (test_agents.AgentTests.test_conflicting_pin_and_exclusion_rejected) ... ok
 test_context_limits_preserve_bubble_balance (test_agents.AgentTests.test_context_limits_preserve_bubble_balance) ... ok
+test_credit_failure_cancels_parallel_investigation (test_agents.AgentTests.test_credit_failure_cancels_parallel_investigation) ... ok
 test_deadline_includes_model_wait (test_agents.AgentTests.test_deadline_includes_model_wait) ... ok
 test_depth_cannot_exceed_two (test_agents.AgentTests.test_depth_cannot_exceed_two) ... ok
 test_empty_selection_does_not_search_all_namespaces (test_agents.AgentTests.test_empty_selection_does_not_search_all_namespaces) ... ok
@@ -15,6 +17,7 @@ test_model_time_scope_used_when_caller_omits_it (test_agents.AgentTests.test_mod
 test_named_original_is_read_only_after_matching_search (test_agents.AgentTests.test_named_original_is_read_only_after_matching_search) ... ok
 test_no_evidence_skips_synthesis (test_agents.AgentTests.test_no_evidence_skips_synthesis) ... ok
 test_one_bubble_failure_does_not_erase_other_results (test_agents.AgentTests.test_one_bubble_failure_does_not_erase_other_results) ... ok
+test_original_reads_and_context_cap_do_not_change_retrieval_ranking (test_agents.AgentTests.test_original_reads_and_context_cap_do_not_change_retrieval_ranking) ... ok
 test_original_requires_discovered_item_and_three_parts_maximum (test_agents.AgentTests.test_original_requires_discovered_item_and_three_parts_maximum) ... ok
 test_own_paths_may_cross_only_explicitly_selected_bubbles (test_agents.AgentTests.test_own_paths_may_cross_only_explicitly_selected_bubbles) ... ok
 test_parallel_bubbles_use_concurrent_tasks (test_agents.AgentTests.test_parallel_bubbles_use_concurrent_tasks) ... ok
@@ -22,6 +25,7 @@ test_partial_evidence_survives_backend_timeout (test_agents.AgentTests.test_part
 test_pins_and_exclusions_override_router (test_agents.AgentTests.test_pins_and_exclusions_override_router) ... ok
 test_provider_routing_failure_is_recorded (test_agents.AgentTests.test_provider_routing_failure_is_recorded) ... ok
 test_six_calls_are_a_hard_limit (test_agents.AgentTests.test_six_calls_are_a_hard_limit) ... ok
+test_source_spans_match_immutable_clean_text (test_agents.AgentTests.test_source_spans_match_immutable_clean_text) ... ok
 test_synthesis_connection_failure_preserves_evidence (test_agents.AgentTests.test_synthesis_connection_failure_preserves_evidence) ... ok
 test_uncited_claim_is_rejected (test_agents.AgentTests.test_uncited_claim_is_rejected) ... ok
 test_unknown_route_fails_before_backend (test_agents.AgentTests.test_unknown_route_fails_before_backend) ... ok
@@ -29,17 +33,23 @@ test_unseen_citation_is_rejected (test_agents.AgentTests.test_unseen_citation_is
 test_grounding_flag_requires_a_boolean (test_agents.ContractTests.test_grounding_flag_requires_a_boolean) ... ok
 test_limits_reject_invalid_budgets_and_deadlines (test_agents.ContractTests.test_limits_reject_invalid_budgets_and_deadlines) ... ok
 test_conflicts_keep_both_sides_and_follow_credibility_threshold (test_agents.TemporalAndMergeTests.test_conflicts_keep_both_sides_and_follow_credibility_threshold) ... ok
+test_conflicts_use_the_end_date_known_at_query_time (test_agents.TemporalAndMergeTests.test_conflicts_use_the_end_date_known_at_query_time) ... ok
 test_equal_timestamp_disagreement_has_no_arbitrary_preference (test_agents.TemporalAndMergeTests.test_equal_timestamp_disagreement_has_no_arbitrary_preference) ... ok
 test_invalid_offsets_and_naive_dates_are_rejected (test_agents.TemporalAndMergeTests.test_invalid_offsets_and_naive_dates_are_rejected) ... ok
 test_later_invalidation_does_not_leak_into_earlier_knowledge_state (test_agents.TemporalAndMergeTests.test_later_invalidation_does_not_leak_into_earlier_knowledge_state) ... ok
 test_successive_ceos_are_not_a_simultaneous_conflict (test_agents.TemporalAndMergeTests.test_successive_ceos_are_not_a_simultaneous_conflict) ... ok
 test_validity_end_is_exclusive_and_knowledge_cutoff_is_separate (test_agents.TemporalAndMergeTests.test_validity_end_is_exclusive_and_knowledge_cutoff_is_separate) ... ok
 test_adapter_input_excludes_answers_and_relevance_labels (test_evaluation.HarnessTests.test_adapter_input_excludes_answers_and_relevance_labels) ... ok
+test_credit_failure_stops_and_resume_preserves_measured_cases_and_ratings (test_evaluation.HarnessTests.test_credit_failure_stops_and_resume_preserves_measured_cases_and_ratings) ... ok
 test_empty_ratings_remain_unmeasured_after_import (test_evaluation.HarnessTests.test_empty_ratings_remain_unmeasured_after_import) ... ok
 test_every_trace_respects_known_time_and_validity (test_evaluation.HarnessTests.test_every_trace_respects_known_time_and_validity) ... ok
-test_failed_cases_are_retained_in_denominator (test_evaluation.HarnessTests.test_failed_cases_are_retained_in_denominator) ... ok
+test_failed_cases_are_retained_without_quality_measurements (test_evaluation.HarnessTests.test_failed_cases_are_retained_without_quality_measurements) ... ok
 test_invalid_adapter_response_is_recorded_for_each_case (test_evaluation.HarnessTests.test_invalid_adapter_response_is_recorded_for_each_case) ... ok
+test_paired_correctness_uses_only_shared_question_grades (test_evaluation.HarnessTests.test_paired_correctness_uses_only_shared_question_grades) ... ok
 test_partial_citation_labels_do_not_become_full_faithfulness (test_evaluation.HarnessTests.test_partial_citation_labels_do_not_become_full_faithfulness) ... ok
+test_resume_rejects_different_adapter_revision (test_evaluation.HarnessTests.test_resume_rejects_different_adapter_revision) ... ok
+test_retrieval_ranking_is_scored_separately_from_answer_context (test_evaluation.HarnessTests.test_retrieval_ranking_is_scored_separately_from_answer_context) ... ok
+test_retryable_failures_are_unmeasured_and_other_cases_continue (test_evaluation.HarnessTests.test_retryable_failures_are_unmeasured_and_other_cases_continue) ... ok
 test_run_evidence_is_not_overwritten (test_evaluation.HarnessTests.test_run_evidence_is_not_overwritten) ... ok
 test_six_configuration_smoke_run_has_no_invented_quality_scores (test_evaluation.HarnessTests.test_six_configuration_smoke_run_has_no_invented_quality_scores) ... ok
 test_snapshot_hash_mismatch_is_rejected (test_evaluation.HarnessTests.test_snapshot_hash_mismatch_is_rejected) ... ok
@@ -54,10 +64,10 @@ test_relevance_comes_only_from_labels (test_evaluation.MetricTests.test_relevanc
 test_routing_is_multilabel_set_precision_and_recall (test_evaluation.MetricTests.test_routing_is_multilabel_set_precision_and_recall) ... ok
 
 ----------------------------------------------------------------------
-Ran 53 tests in 0.641s
+Ran 63 tests in 1.960s
 
 OK
 Running the development evaluation...
-PASS: 53 tests and 72 development runs.
+PASS: 63 tests and 72 development runs.
 The development run uses scripted components; live integrations are pending.
 Results saved to verification/run

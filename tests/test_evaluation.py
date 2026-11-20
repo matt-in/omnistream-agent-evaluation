@@ -3,9 +3,10 @@ import json
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from omnistream.contracts import CONFIGURATIONS, Claim, Evidence, TimeScope
+from omnistream.contracts import CONFIGURATIONS, Claim, Evidence, ProviderBlocked, ProviderUnavailable, TimeScope
 from omnistream.evaluation import EvaluationHarness, load_snapshot, score_run
 from omnistream.fixtures import FixtureSystem
 from omnistream.metrics import (
@@ -116,14 +117,14 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
                 return await FixtureSystem(SNAPSHOT / "items.jsonl").answer(case, config)
         await EvaluationHarness(CheckingAdapter(), "fixture_smoke").run(SNAPSHOT, self.output, CONFIGURATIONS[:1])
 
-    async def test_failed_cases_are_retained_in_denominator(self):
+    async def test_failed_cases_are_retained_without_quality_measurements(self):
         class BrokenAdapter:
             async def answer(self, *args):
                 raise ConnectionError("missing backend")
         rows = await EvaluationHarness(BrokenAdapter(), "fixture_smoke").run(SNAPSHOT, self.output, CONFIGURATIONS[:1])
         self.assertEqual(len(rows), 12)
         self.assertTrue(all(r["status"] == "adapter_error" for r in rows))
-        self.assertEqual(next(r for r in rows if r["question_id"] == "P01")["recall_at_10"], 0)
+        self.assertTrue(all(r["recall_at_10"] is None and not r["measured"] for r in rows))
 
     async def test_invalid_adapter_response_is_recorded_for_each_case(self):
         class InvalidAdapter:
@@ -140,6 +141,118 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
         await self.create_run()
         with self.assertRaises(FileExistsError):
             await self.create_run()
+
+    async def test_credit_failure_stops_and_resume_preserves_measured_cases_and_ratings(self):
+        class InterruptibleAdapter:
+            def __init__(self):
+                self.fixture = FixtureSystem(SNAPSHOT / "items.jsonl")
+                self.calls = []
+                self.block = True
+
+            async def answer(self, case, config):
+                self.calls.append(case.id)
+                if self.block and len(self.calls) == 3:
+                    raise ProviderBlocked("Insufficient credit")
+                return await self.fixture.answer(case, config)
+
+        adapter = InterruptibleAdapter()
+        harness = EvaluationHarness(adapter, "integrated", adapter_revision="test-settings")
+        cfg = CONFIGURATIONS[:1]
+        partial = await harness.run(SNAPSHOT, self.output, cfg)
+        self.assertEqual(sum(r["measured"] for r in partial), 2)
+        interrupted = json.loads((self.output / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual((interrupted["run_status"], interrupted["unmeasured"], interrupted["pending"]),
+                         ("interrupted", 1, 9))
+        path = self.output / "manual_ratings.csv"
+        with path.open(encoding="utf-8") as stream:
+            grades = list(csv.DictReader(stream))
+        rated = grades[0]["question_id"]
+        grades[0].update(answer_correctness="2", rater="test")
+        EvaluationHarness._csv(path, grades)
+        first_two = set(adapter.calls[:2])
+        adapter.calls.clear()
+        adapter.block = False
+        completed = await harness.run(SNAPSHOT, self.output, cfg, resume=True)
+        self.assertEqual(len(adapter.calls), 10)
+        self.assertFalse(first_two & set(adapter.calls))
+        self.assertTrue(all(r["measured"] for r in completed))
+        with path.open(encoding="utf-8") as stream:
+            grades = {r["question_id"]: r for r in csv.DictReader(stream)}
+        self.assertEqual(grades[rated]["answer_correctness"], "2")
+        self.assertEqual(json.loads((self.output / "run.json").read_text(encoding="utf-8"))["run_status"],
+                         "complete")
+
+    async def test_resume_rejects_different_adapter_revision(self):
+        adapter = FixtureSystem(SNAPSHOT / "items.jsonl")
+        cfg = CONFIGURATIONS[:1]
+        await EvaluationHarness(adapter, "integrated", adapter_revision="first").run(SNAPSHOT, self.output, cfg)
+        with self.assertRaisesRegex(ValueError, "Checkpoint does not match"):
+            await EvaluationHarness(adapter, "integrated", adapter_revision="changed").run(
+                SNAPSHOT, self.output, cfg, resume=True)
+
+    async def test_retryable_failures_are_unmeasured_and_other_cases_continue(self):
+        class UnavailableAdapter:
+            def __init__(self):
+                self.fixture = FixtureSystem(SNAPSHOT / "items.jsonl")
+
+            async def answer(self, case, config):
+                if case.id == "P01":
+                    raise ProviderUnavailable("Rate limited")
+                return await self.fixture.answer(case, config)
+
+        rows = await EvaluationHarness(UnavailableAdapter(), "fixture_smoke").run(
+            SNAPSHOT, self.output, CONFIGURATIONS[:1])
+        failed = next(r for r in rows if r["question_id"] == "P01")
+        self.assertEqual(failed["status"], "provider_unavailable")
+        self.assertIsNone(failed["recall_at_10"])
+        with (self.output / "comparison.csv").open(encoding="utf-8") as stream:
+            full = next(r for r in csv.DictReader(stream) if r["kind"] == "all")
+        self.assertEqual((full["expected"], full["measured"], full["failed"], full["recall_at_10_n"]),
+                         ("12", "11", "1", "10"))
+
+    async def test_retrieval_ranking_is_scored_separately_from_answer_context(self):
+        _, questions, labels = load_snapshot(SNAPSHOT)
+        question = questions[0]
+        ids = tuple(labels[question["id"]])
+
+        class RankingAdapter:
+            def __init__(self):
+                self.fixture = FixtureSystem(SNAPSHOT / "items.jsonl")
+
+            async def answer(self, case, config):
+                result = await self.fixture.answer(case, config)
+                if case.id == question["id"]:
+                    return replace(result, evidence=(), claims=(), citations=(), ranked_evidence_ids=ids)
+                return result
+
+        rows = await EvaluationHarness(RankingAdapter(), "fixture_smoke").run(
+            SNAPSHOT, self.output, CONFIGURATIONS[:1])
+        scored = next(r for r in rows if r["question_id"] == question["id"])
+        self.assertEqual(scored["recall_at_10"], 1)
+        self.assertIsNone(scored["citation_validity"])
+
+    async def test_paired_correctness_uses_only_shared_question_grades(self):
+        await self.create_run()
+        path = self.output / "manual_ratings.csv"
+        with path.open(encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        grades = {
+            ("own_agents", "P01"): 2, ("classic_agents", "P01"): 0,
+            ("own_agents", "P02"): 2, ("classic_agents", "P02"): 1,
+            ("classic_agents", "P03"): 2,
+        }
+        for row in rows:
+            key = (row["configuration"], row["question_id"])
+            if key in grades:
+                row.update(answer_correctness=str(grades[key]), rater="test")
+        EvaluationHarness._csv(path, rows)
+        scored = Path(self.temp.name) / "scored"
+        score_run(self.output, path, self.output / "citation_ratings.csv", scored)
+        with (scored / "paired_correctness.csv").open(encoding="utf-8") as stream:
+            pair = next(r for r in csv.DictReader(stream) if
+                        (r["configuration"], r["comparison"], r["kind"]) == ("own_agents", "classic_agents", "all"))
+        self.assertEqual((pair["expected_pairs"], pair["scored_pairs"], pair["mean_difference"]),
+                         ("12", "2", "1.5"))
 
     async def test_empty_ratings_remain_unmeasured_after_import(self):
         await self.create_run()

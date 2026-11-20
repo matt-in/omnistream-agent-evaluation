@@ -66,7 +66,6 @@ for name, rows in (("items.jsonl", items), ("questions.jsonl", questions)):
 manifest = {"name": "fictional_pilot_v1", "version": 1, "split": "development_only",
             "fictional": True, "frozen_at": "2026-11-10T12:00:00Z",
             "item_count": len(items), "question_count": len(questions),
-            "target_final_counts": {"single_bubble": 15, "multi_hop": 20, "temporal": 15, "freshness": 10},
             "sha256": {n: hashlib.sha256((ROOT / n).read_bytes()).hexdigest()
                        for n in ("items.jsonl", "questions.jsonl", "qrels.json")}}
 (ROOT / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8", newline="\n")

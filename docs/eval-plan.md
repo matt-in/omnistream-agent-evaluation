@@ -1,72 +1,49 @@
 # Evaluation plan
 
-## Aim
-
-I will compare the retrieval methods and agent variants using the same questions and stored source material. The main questions are whether graph retrieval helps with linked facts and changed facts, and whether the agent's additional steps improve the answers enough to justify their cost.
-
 ## Configurations
 
-| Name | Intended setup |
+| Configuration | Retrieval and answering |
 | --- | --- |
-| external | Independent LlamaIndex text-retrieval baseline |
-| classic | Chroma text retrieval with a direct answer |
-| graphiti | Graphiti hybrid retrieval with a direct answer |
-| own | Custom graph retrieval with a direct answer |
-| own_agents | Custom graph retrieval with bubble investigations |
-| classic_agents | Text retrieval with the same controller and text tools |
+| `external` | Independent LlamaIndex pipeline |
+| `classic` | Chroma chunks with direct answering |
+| `graphiti` | Graphiti search with direct answering |
+| `own` | Custom graph retrieval with direct answering |
+| `own_agents` | Custom graph retrieval with subagents on multi-hop questions |
+| `classic_agents` | Chroma with the same subagent budgets and text tools |
 
-The development runner exercises all six labels using scripted components. Genuine backend comparisons start after the adapters are connected. The external development label is not a LlamaIndex implementation.
+The primary comparisons pair custom graph retrieval with subagents against classic and external on multi-hop questions. Custom graph plus subagents versus classic plus subagents measures the difference between the two configured systems under an agent loop. Comparisons within each retrieval mode estimate the effect of enabling the loop. Graph configurations expose additional tools, so attributing this difference to graph topology alone requires a separate control.
 
-## Question set
+## Datasets
 
-The development snapshot has ten fictional source items and twelve questions, with three examples in each category below. These questions stay outside the final set.
-
-| Final category | Planned count |
-| --- | --- |
-| Single-bubble factual | 15 |
-| Multi-hop across bubbles | 20 |
-| Time-sensitive changed facts | 15 |
-| Freshness | 10 |
-| Total | 60 |
-
-Each question needs a reference answer, relevant bubbles, a time scope and the source assertions required to answer it. Multi-hop labels must include the intermediate facts. Equivalent passages and graph facts can map to the same assertion. Another reviewer should check the labels before the set is frozen.
-
-## Shared conditions
-
-I will use the same eligible source content, embedding model and answer model across the integrated runs. Retrieval parameters, prompts, context size, model settings and source cutoffs will be recorded. Agent variants share the action and time budgets. Graph agents have additional graph tools, so a difference between agent variants cannot automatically be attributed to graph topology alone.
-
-Inputs are frozen before a controlled run. The loader checks the data hashes, and the runner records code hashes, execution order and per-question outputs. Gold answers and evidence labels stay on the scoring side; answering adapters receive the question and query settings.
-
-## Measures
-
-| Measure | Definition | Planned target |
+| Set | Items and questions | Purpose |
 | --- | --- | --- |
-| Recall@10 | Required assertions covered by the first ten unique evidence units | Graph retrieval exceeds classic on multi-hop questions |
-| MRR and Hits@1 | Rank of the first relevant unit and relevance of the first unit | Report by configuration and category |
-| Query routing | Precision and recall of selected bubbles | Recall at least 0.90; precision at least 0.70 |
-| Ingestion routing | Exact agreement with independently labeled bubble sets | At least 0.85 on 50 items |
-| Answer correctness | 0 wrong, 1 partly correct, 2 complete and supported | Full system improves multi-hop mean by at least 0.30 points over classic and external separately |
-| Citation faithfulness | Independently judged support for claim/citation links | At least 0.90 |
-| Changed-fact accuracy | Correct answers on changed-fact questions | At least 0.80 |
-| Freshness lag | Publication to first retrieval visibility | No more than poll interval plus five minutes |
-| Duplicate entities | Extra duplicate records within a bubble | At most 5 percent in a 100-entity audit |
-| Ungrounded entities | Extracted entities unsupported by stored text | Report |
-| Memory | Combined application and VM use without counting containers twice | At most 4 GB |
+| Pilot | 10 fictional items and 12 questions | Local controller and runner verification |
+| eval-v2 | 90 fictional items and 60 questions | Synthetic development and retrieval diagnosis |
+| real-v2 development | 24 scored questions | Development with recorded source items |
+| real-v2 held-out | 55 scored questions | Final paired comparison |
 
-Citation-reference validity is a structural check, separate from whether the cited passage supports the claim. Missing judgments remain unmeasured. An unanswerable question has no retrieval-recall denominator; failed answerable questions remain in the run.
+The eval-v2 mix is 15 factual, 20 multi-hop, 15 temporal and 10 freshness questions. The real-v2 corpus contains 350 items. The development and held-out questions use disjoint supporting source items. Synthetic examples, development changes and judge calibration remain separate from the held-out run.
 
-## Time and updates
+The executable pilot has `items.jsonl`, `questions.jsonl`, `qrels.json` and a hash manifest. The normalized question data records a question identifier, category, text, knowledge cutoff, answerability, expected bubbles and supporting assertion identifiers. An optional `scope` is an explicit input to the query. The route resolves the window for questions that test date interpretation. Relevance labels map returned chunk and fact identifiers to common support identifiers.
 
-The query has two time settings: when a fact is valid, and what information was available to the system. Validity intervals include their start and exclude their end. Later changes must not leak into earlier knowledge states. Adapters need versioned records or replayed states when a final index cannot reconstruct the earlier state.
+## Measurement
 
-The 50 non-freshness questions use frozen inputs. The ten freshness cases will replay the same arrivals into reset stores and record when each item first becomes searchable. The existing development timestamps test filtering only; live arrival-to-visibility measurements remain pending.
+| Measure | Definition and target |
+| --- | --- |
+| Recall@10 | Fraction of the required assertions covered by the first ten unique retrieval units. Graph modes are expected to exceed classic on multi-hop cases. |
+| MRR and Hits@1 | Reciprocal rank of the first relevant unit and relevance of the first unit. Both are reported by configuration. |
+| Query routing | Set precision and recall for selected bubbles, with targets of 0.70 and 0.90 respectively. |
+| Answer correctness | Independent 0, 1 or 2 rating. The full system targets a mean improvement of at least 0.30 points over classic and external on multi-hop cases. |
+| Citation faithfulness | Fraction of claim-citation links judged to support the claim, with a target of 0.90. |
+| Changed facts | Correctness on changed-fact questions, with a target of 0.80. |
+| Freshness | Publication to retrieval visibility, with a target of the polling interval plus five minutes. Injection-to-answer delay is a separate measure. |
 
-## Judging and analysis
+Ingestion exact-set routing accuracy, entity duplication, grounding, total memory and provider cost require observations from the shared application. The targets are at least 0.85 for ingestion routing accuracy, at most 5% duplicates in a 100-entity audit and at most 4 GB of peak combined memory.
 
-Correctness and citation labels will be assigned independently of the system configuration. The scoring command imports identified ratings and leaves incomplete citation judgments unscored. A judge model, if used, must be checked against human ratings before its scores are accepted.
+Shared conditions include a frozen corpus, consistent eligibility and time cutoffs, and recorded model, embedding, ranking and context settings. Freshness replays use the same item arrivals and reset stores. The first retrievable time is recorded separately from publication and injection.
 
-Results will be reported by question category. Comparisons use paired questions, with mean differences and uncertainty intervals. Call counts, context length, token use and latency should be reported alongside quality. A positive development check does not establish answer-quality gains.
+## Execution and scoring
 
-## Remaining work
+The runner saves each outcome with its question and configuration. Unmeasured cases retain failure statuses and have blank scores. Missing and pending cases are counted separately. Valid abstentions and empty retrievals remain measured outcomes. Resumed execution reuses the same data and settings and skips measured cases.
 
-The evaluation code and development data are ready for integration checks. The remaining work is to connect genuine backends, collect the final corpus, review the question labels, calibrate judgments, run the comparisons, and measure live updates and memory use.
+Ratings are assigned independently of the configuration. Answer correctness grades are 0 for wrong or unsupported, 1 for partly correct and 2 for complete and supported. Citation-reference and source-offset checks are separate from semantic support ratings. Automatic judgments require calibration against a blinded human sample. Scored exports include paired differences on shared question IDs and the number of measured pairs. Final comparisons depend on coverage, documented settings and the held-out results.

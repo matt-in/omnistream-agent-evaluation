@@ -8,6 +8,14 @@ from typing import Any, Literal, Protocol
 Mode = Literal["external", "classic", "graphiti", "own"]
 
 
+class ProviderUnavailable(RuntimeError):
+    """A retryable model or retrieval service failure."""
+
+
+class ProviderBlocked(ProviderUnavailable):
+    """A credit or authorization problem that stops a run."""
+
+
 def timestamp(value: str) -> datetime:
     result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None or result.utcoffset() is None:
@@ -126,15 +134,22 @@ class Evidence:
             if timestamp(self.valid_to) <= timestamp(self.valid_from):
                 raise ValueError("Invalid fact validity interval")
 
+    def validity(self, known_at: str | None = None) -> tuple[datetime | None, datetime | None]:
+        start = timestamp(self.valid_from) if self.valid_from else None
+        end_known = (
+            known_at is None or self.invalidated_at is None
+            or timestamp(self.invalidated_at) <= timestamp(known_at)
+        )
+        end = timestamp(self.valid_to) if self.valid_to and end_known else None
+        return start, end
+
     def visible(self, scope: TimeScope, known_at: str) -> bool:
         known = timestamp(known_at)
         if timestamp(self.published_at) > known or timestamp(self.available_at) > known:
             return False
         if not self.grounded:
             return False
-        start = timestamp(self.valid_from) if self.valid_from else None
-        invalidation_known = self.invalidated_at is None or timestamp(self.invalidated_at) <= known
-        end = timestamp(self.valid_to) if self.valid_to and invalidation_known else None
+        start, end = self.validity(known_at)
         qstart = timestamp(scope.start)
         if scope.end is None:
             return (start is None or start <= qstart) and (end is None or qstart < end)
@@ -200,3 +215,9 @@ class Backend(Protocol):
         self, bubble_id: str, mode: Mode, call: ToolCall,
         scope: TimeScope, known_at: str, *, allowed_bubbles: tuple[str, ...],
     ) -> tuple[Evidence, ...]: ...
+
+
+class SourceStore(Protocol):
+    """Returns the immutable clean text for a stored item."""
+
+    async def clean_text(self, item_id: str) -> str | None: ...

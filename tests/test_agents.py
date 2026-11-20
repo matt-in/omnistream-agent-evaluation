@@ -4,8 +4,11 @@ from dataclasses import replace
 
 from omnistream.agents import AgentRunner, Limits, merge_conflicts
 from omnistream.contracts import (
-    Bubble, Claim, Configuration, Draft, Evidence, Finish, Query, Route, TimeScope, ToolCall,
+    CONFIGURATIONS, Bubble, Claim, Configuration, Draft, Evidence, Finish, ProviderBlocked,
+    Query, Route, TimeScope, ToolCall,
 )
+from omnistream.evaluation import EvaluationCase
+from omnistream.integration import ProjectSystem, RetrievalAdapters
 
 
 NOW = "2026-11-10T12:00:00Z"
@@ -184,7 +187,55 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         answer = await self.run_agent(Model(draft=Draft((Claim("Oriole is on Mars.", ("n1",)),))))
         self.assertEqual(answer.status, "ok")
         self.assertEqual(answer.citations[0]["item_id"], "item_n1")
+        self.assertFalse(answer.citations[0]["span_checked"])
 
+    async def test_source_spans_match_immutable_clean_text(self):
+        evidence = fact(text="Oriole works in İzmir.")
+        good = replace(evidence, start=2, end=2 + len(evidence.text), source_url="https://example.test/oriole")
+        invalid = replace(good, unit_id="wrong_offset", start=1, end=good.end - 1)
+        missing = replace(good, unit_id="missing_source", item_id="unavailable")
+
+        class Source:
+            async def clean_text(self, item_id):
+                return "• " + good.text if item_id == good.item_id else None
+
+        runner = AgentRunner(Model(), Backend((invalid, good, missing)), CATALOG, source_store=Source())
+        answer = await runner.run(Query("Where is Oriole?", NOW, SCOPE), OWN)
+        self.assertEqual([e.unit_id for e in answer.evidence], [good.unit_id])
+        self.assertEqual(answer.citations[0]["source_url"], good.source_url)
+        self.assertTrue(answer.citations[0]["span_checked"])
+
+    async def test_credit_failure_cancels_parallel_investigation(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        class BlockedBackend(Backend):
+            async def execute(self, bubble_id, *args, **kwargs):
+                if bubble_id == "news":
+                    await started.wait()
+                    raise ProviderBlocked("Credit unavailable")
+                started.set()
+                try:
+                    await asyncio.sleep(10)
+                finally:
+                    cancelled.set()
+
+        route = Route(("news", "finance"), "multi_hop", SCOPE)
+        with self.assertRaises(ProviderBlocked):
+            await self.run_agent(Model(route), BlockedBackend(), limits=Limits(agent_seconds=.5))
+        self.assertTrue(cancelled.is_set())
+
+    async def test_original_reads_and_context_cap_do_not_change_retrieval_ranking(self):
+        class RankingBackend(Backend):
+            async def execute(self, bubble, mode, call, *args, **kwargs):
+                if call.name == "read_item":
+                    return (replace(fact(), unit_id="original", kind="original"),)
+                return (fact(), replace(fact(), unit_id="second"))
+
+        route = Route(("news",), "simple", SCOPE, True, "item_n1")
+        answer = await self.run_agent(Model(route), RankingBackend(), limits=Limits(max_context_units=1))
+        self.assertEqual(answer.ranked_evidence_ids, ("n1", "second"))
+        self.assertEqual([e.unit_id for e in answer.evidence], ["n1"])
+        self.assertEqual(answer.investigations[0].history[-1].evidence[0].unit_id, "original")
 
     async def test_no_evidence_skips_synthesis(self):
         model = Model()
@@ -256,6 +307,36 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         answer = await self.run_agent(Model(actions=actions), Backend((old, now)), query=Query("History?", NOW, scope))
         self.assertEqual([e.unit_id for e in answer.investigations[0].history[1].evidence], ["new"])
 
+    async def test_application_and_evaluation_use_their_own_retrieval_adapters(self):
+        query = Query("Where is Oriole?", NOW, SCOPE)
+        case = EvaluationCase("Q01", "single_bubble", query)
+        classic, graphiti, own = Backend(), Backend(), Backend()
+        answer_from_external = await self.run_agent()
+
+        class Baseline:
+            async def answer(self, given, config):
+                self.case, self.config = given, config
+                return answer_from_external
+
+        class Source:
+            async def clean_text(self, item_id):
+                return fact().text
+
+        external = Baseline()
+        system = ProjectSystem(Model(), RetrievalAdapters(classic=classic, graphiti=graphiti, own=own),
+                               CATALOG, Source(), external)
+        await system.ask(query)
+        self.assertEqual([call[1] for call in own.calls], ["own"])
+        self.assertFalse(classic.calls or graphiti.calls)
+        for config in CONFIGURATIONS:
+            result = await system.answer(case, config)
+            if config.mode == "external":
+                self.assertIs(result, answer_from_external)
+                self.assertEqual((external.case, external.config), (case, config))
+        self.assertEqual([call[1] for call in classic.calls], ["classic", "classic"])
+        self.assertEqual([call[1] for call in graphiti.calls], ["graphiti"])
+        self.assertEqual([call[1] for call in own.calls], ["own", "own", "own"])
+
 
 class TemporalAndMergeTests(unittest.TestCase):
     def test_later_invalidation_does_not_leak_into_earlier_knowledge_state(self):
@@ -295,6 +376,15 @@ class TemporalAndMergeTests(unittest.TestCase):
         a = fact(subject="oriole", relation="ceo", object="niko", valid_to="2026-11-05T00:00:00Z")
         b = replace(a, unit_id="b", object="leda", valid_from="2026-11-05T00:00:00Z", valid_to=None)
         self.assertEqual(merge_conflicts((a, b)), ())
+
+    def test_conflicts_use_the_end_date_known_at_query_time(self):
+        a = fact(subject="oriole", relation="ceo", object="niko",
+                 valid_to="2026-11-05T00:00:00Z", invalidated_at="2026-11-09T00:00:00Z")
+        b = replace(a, unit_id="b", object="leda", valid_from="2026-11-05T00:00:00Z",
+                    valid_to=None, invalidated_at=None)
+        earlier = merge_conflicts((a, b), "2026-11-07T00:00:00Z")
+        self.assertEqual(earlier[0]["evidence_ids"], ["b", "n1"])
+        self.assertEqual(merge_conflicts((a, b), NOW), ())
 
 
 class ContractTests(unittest.TestCase):

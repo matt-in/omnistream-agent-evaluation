@@ -4,11 +4,10 @@ import asyncio
 import math
 from dataclasses import dataclass, replace
 from itertools import zip_longest
-from typing import Any
 
 from .contracts import (
     Backend, Bubble, Claim, Configuration, Draft, Evidence, Finish, Model,
-    Observation, Query, Route, TimeScope, ToolCall, timestamp,
+    Observation, ProviderUnavailable, Query, Route, SourceStore, TimeScope, ToolCall, timestamp,
 )
 
 
@@ -52,15 +51,18 @@ class Answer:
     citations: tuple[dict, ...]
     text: str
     errors: tuple[str, ...] = ()
+    ranked_evidence_ids: tuple[str, ...] | None = None
 
 
-def overlap(a: Evidence, b: Evidence) -> bool:
-    lows = [timestamp(x) for x in (a.valid_from, b.valid_from) if x]
-    highs = [timestamp(x) for x in (a.valid_to, b.valid_to) if x]
+def overlap(a: Evidence, b: Evidence, known_at: str | None = None) -> bool:
+    a_start, a_end = a.validity(known_at)
+    b_start, b_end = b.validity(known_at)
+    lows = [x for x in (a_start, b_start) if x is not None]
+    highs = [x for x in (a_end, b_end) if x is not None]
     return not lows or not highs or max(lows) < min(highs)
 
 
-def merge_conflicts(evidence: tuple[Evidence, ...]) -> tuple[dict, ...]:
+def merge_conflicts(evidence: tuple[Evidence, ...], known_at: str | None = None) -> tuple[dict, ...]:
     """Report candidate conflicts; multi-valued relations need schema review."""
     groups: dict[tuple, list[Evidence]] = {}
     for fact in evidence:
@@ -70,7 +72,7 @@ def merge_conflicts(evidence: tuple[Evidence, ...]) -> tuple[dict, ...]:
     for (subject, relation), facts in sorted(groups.items()):
         conflicting = {
             f.unit_id: f for f in facts
-            if any(f.object != g.object and overlap(f, g) for g in facts)
+            if any(f.object != g.object and overlap(f, g, known_at) for g in facts)
         }
         if not conflicting:
             continue
@@ -92,9 +94,10 @@ def merge_conflicts(evidence: tuple[Evidence, ...]) -> tuple[dict, ...]:
 
 class AgentRunner:
     def __init__(self, model: Model, backend: Backend, catalog: tuple[Bubble, ...],
-                 limits: Limits | None = None):
+                 limits: Limits | None = None, *, source_store: SourceStore | None = None):
         self.model, self.backend, self.catalog = model, backend, catalog
         self.limits = limits or Limits()
+        self.source_store = source_store
         if len({b.id for b in catalog}) != len(catalog):
             raise ValueError("Bubble IDs must be unique")
 
@@ -123,20 +126,34 @@ class AgentRunner:
             query = replace(query, scope=scope)
             route = Route(tuple(b.id for b in bubbles), route.strategy, scope,
                           route.names_specific_item, route.item_id, route.rationale)
+        except ProviderUnavailable:
+            raise
         except Exception as error:
             return self._empty("routing_failed", errors=(type(error).__name__,))
         if not bubbles:
             return self._empty("no_bubbles", route)
         use_agents = configuration.subagents and route.strategy == "multi_hop"
-        investigations = tuple(await asyncio.gather(*(
-            self._investigate(query, bubble, configuration, use_agents, route)
-            for bubble in bubbles
-        )))
+        tasks = [asyncio.create_task(self._investigate(query, bubble, configuration, use_agents, route))
+                 for bubble in bubbles]
+        try:
+            investigations = tuple(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         evidence = self._context(investigations)
-        conflicts = merge_conflicts(evidence)
+        rankings = [tuple(e.unit_id for call in i.history if call.tool != "read_item" for e in call.evidence)
+                    for i in investigations]
+        ranked_ids = tuple(dict.fromkeys(unit for layer in zip_longest(*rankings)
+                                        for unit in layer if unit is not None))
+        conflicts = merge_conflicts(evidence, query.known_at)
         if not evidence:
+            if all(i.status in {"failed", "timeout"} for i in investigations):
+                return Answer("investigation_failed", route, investigations, (), (), (), (),
+                              "Retrieval could not be completed.", ranked_evidence_ids=ranked_ids)
             return Answer("no_evidence", route, investigations, (), (), (), (),
-                          "Insufficient evidence in the selected sources.")
+                          "Insufficient evidence in the selected sources.", ranked_evidence_ids=ranked_ids)
         try:
             draft = await asyncio.wait_for(
                 self.model.synthesize(query, evidence, conflicts), self.limits.synthesis_seconds,
@@ -145,7 +162,7 @@ class AgentRunner:
                 raise ValueError("Invalid answer schema")
             if draft.abstain or not draft.claims:
                 return Answer("abstained", route, investigations, evidence, (), conflicts, (),
-                              "Insufficient evidence to answer the question.")
+                              "Insufficient evidence to answer the question.", ranked_evidence_ids=ranked_ids)
             allowed = {e.unit_id: e for e in evidence}
             for claim in draft.claims:
                 if not isinstance(claim, Claim) or not claim.text.strip() or not claim.evidence_ids:
@@ -157,7 +174,9 @@ class AgentRunner:
             cited_ids.extend(u for c in conflicts for u in c["evidence_ids"] if u not in cited_ids)
             citations = tuple({"number": i + 1, "unit_id": u,
                                "item_id": allowed[u].item_id, "start": allowed[u].start,
-                               "end": allowed[u].end, "bubble_id": allowed[u].bubble_id}
+                               "end": allowed[u].end, "bubble_id": allowed[u].bubble_id,
+                               "source_url": allowed[u].source_url,
+                               "span_checked": self.source_store is not None}
                               for i, u in enumerate(cited_ids))
             numbers = {c["unit_id"]: c["number"] for c in citations}
             text = "\n".join(c.text + " " + "".join(f"[{numbers[u]}]" for u in dict.fromkeys(c.evidence_ids))
@@ -172,10 +191,12 @@ class AgentRunner:
                 text += f". Preferred assertion: [{numbers[pref]}]." if pref else ". Preference unresolved."
             partial = any(i.status not in ("complete", "direct") for i in investigations)
             return Answer("partial" if partial else "ok", route, investigations, evidence,
-                          tuple(displayed_claims), conflicts, citations, text)
+                          tuple(displayed_claims), conflicts, citations, text, ranked_evidence_ids=ranked_ids)
+        except ProviderUnavailable:
+            raise
         except Exception as error:
             return Answer("synthesis_failed", route, investigations, evidence, (), conflicts, (),
-                          "Answer could not be validated.", (type(error).__name__,))
+                          "Answer could not be validated.", (type(error).__name__,), ranked_ids)
 
     @staticmethod
     def _empty(status: str, route: Route | None = None, errors=()) -> Answer:
@@ -184,18 +205,18 @@ class AgentRunner:
     async def _investigate(self, query, bubble, config, use_agents, route):
         history: list[Observation] = []
         collected: dict[str, Evidence] = {}
+        source_text: dict[str, str | None] = {}
         status = "budget_exhausted"
         try:
-
             async with asyncio.timeout(self.limits.agent_seconds):
                 if not use_agents:
                     call = ToolCall("search", {"query": query.text})
-                    await self._observe(query, bubble, config, call, history, collected, route.bubbles)
+                    await self._observe(query, bubble, config, call, history, collected, route.bubbles, source_text)
                     if (route.names_specific_item and route.item_id and collected
                             and {e.item_id for e in collected.values()} == {route.item_id}):
                         await self._observe(query, bubble, config,
                                             ToolCall("read_item", {"item_id": route.item_id, "parts": [1, 2]}),
-                                            history, collected, route.bubbles)
+                                            history, collected, route.bubbles, source_text)
                     status = "failed" if any(h.error for h in history) else "direct"
                 else:
                     for _ in range(self.limits.tool_calls):
@@ -206,18 +227,20 @@ class AgentRunner:
                         if not isinstance(action, ToolCall):
                             history.append(Observation("invalid", error="invalid_action_schema"))
                             continue
-                        await self._observe(query, bubble, config, action, history, collected, route.bubbles)
+                        await self._observe(query, bubble, config, action, history, collected, route.bubbles,
+                                            source_text)
+        except ProviderUnavailable:
+            raise
         except TimeoutError:
             status = "timeout"
             if history and history[-1].error == "in_progress":
                 history[-1] = Observation(history[-1].tool, error="deadline_exceeded")
         except Exception as error:
-
             history.append(Observation("controller", error=type(error).__name__))
             status = "failed"
         return Investigation(bubble.id, status, tuple(collected.values()), tuple(history))
 
-    async def _observe(self, query, bubble, config, call, history, collected, allowed_bubbles):
+    async def _observe(self, query, bubble, config, call, history, collected, allowed_bubbles, source_text):
         position = len(history)
         history.append(Observation(call.name, error="in_progress"))
         try:
@@ -232,7 +255,7 @@ class AgentRunner:
             limit = 10 if config.mode == "classic" else 20
             if call.name == "read_item":
                 limit = len(call.args["parts"])
-            accepted = []
+            accepted = {}
             for e in records:
                 if not isinstance(e, Evidence):
                     raise ValueError("invalid_evidence_schema")
@@ -243,17 +266,23 @@ class AgentRunner:
                     continue
                 if call.name == "read_item" and e.item_id != call.args["item_id"]:
                     continue
-                if e.unit_id in collected and collected[e.unit_id] != e:
+                previous = accepted.get(e.unit_id) or collected.get(e.unit_id)
+                if previous is not None and previous != e:
                     raise ValueError("inconsistent_unit_identity")
-                if e.unit_id not in {x.unit_id for x in accepted}:
-                    accepted.append(e)
+                if self.source_store is not None:
+                    if e.item_id not in source_text:
+                        source_text[e.item_id] = await self.source_store.clean_text(e.item_id)
+                    clean = source_text[e.item_id]
+                    if clean is None or clean[e.start:e.end] != e.text:
+                        continue
+                accepted[e.unit_id] = e
                 if len(accepted) >= limit:
                     break
-            for e in accepted:
-                collected[e.unit_id] = e
-            history[position] = Observation(call.name, tuple(accepted))
+            collected.update(accepted)
+            history[position] = Observation(call.name, tuple(accepted.values()))
+        except ProviderUnavailable:
+            raise
         except Exception as error:
-
             history[position] = Observation(call.name, error=str(error) if isinstance(error, ValueError) else type(error).__name__)
 
     def _validate_call(self, call, config, collected):
@@ -290,7 +319,6 @@ class AgentRunner:
 
     def _context(self, investigations):
         seen, result, chars = set(), [], 0
-
         for row in zip_longest(*(i.evidence for i in investigations)):
             for e in row:
                 if e is None or e.unit_id in seen:
